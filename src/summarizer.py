@@ -29,6 +29,17 @@ from src.data_processor import (
 # Prompts
 # ---------------------------------------------------------------------------
 
+_BRIEF_SUMMARY_SYSTEM_PROMPT = """
+You are a professional nutritionist reviewing Starbucks menu data.
+You will be given statistical data for both the drinks and food menus.
+
+Write exactly ONE concise paragraph (4-6 sentences) that captures the most important
+nutritional highlights across both datasets. Mention specific numbers and notable items.
+Do NOT use headers, bullet points, or multiple paragraphs — plain prose only.
+Caffeine and sugar data are NOT available — do not mention them.
+Do NOT invent data not present in the context.
+""".strip()
+
 _SUMMARY_SYSTEM_PROMPT = """
 You are a professional nutritionist and data analyst reviewing Starbucks menu data.
 You will be given a structured statistical summary of both the drinks and food menus.
@@ -171,6 +182,21 @@ def build_context_block(
 # ---------------------------------------------------------------------------
 # Public features
 # ---------------------------------------------------------------------------
+
+def generate_brief_summary(
+    client: GroqClient,
+    drinks_df: pd.DataFrame,
+    food_df: pd.DataFrame,
+) -> str:
+    """Generate a single-paragraph headline summary for the dashboard."""
+    context = build_context_block(drinks_df, food_df, top_n=3)
+    return client.complete(
+        system_prompt=_BRIEF_SUMMARY_SYSTEM_PROMPT,
+        user_message=context,
+        temperature=0.4,
+        max_tokens=300,
+    )
+
 
 def generate_summary(
     client: GroqClient,

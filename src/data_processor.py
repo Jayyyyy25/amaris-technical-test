@@ -274,12 +274,13 @@ _CATEGORY_PALETTE = px.colors.qualitative.Safe
 
 def _base_layout(fig: go.Figure, title: str) -> go.Figure:
     """Apply a consistent light theme to any figure."""
+    show_title = bool(title)
     fig.update_layout(
-        title=dict(text=title, font=dict(size=16, family=_FONT_FAMILY)),
+        title=dict(text=title, font=dict(size=16, family=_FONT_FAMILY)) if show_title else None,
         font=dict(family=_FONT_FAMILY, size=13),
         paper_bgcolor=_BG_COLOR,
         plot_bgcolor=_BG_COLOR,
-        margin=dict(l=20, r=20, t=60, b=20),
+        margin=dict(l=20, r=20, t=20 if not show_title else 60, b=20),
         hoverlabel=dict(font_size=13, font_family=_FONT_FAMILY),
     )
     fig.update_xaxes(gridcolor=_GRID_COLOR, zerolinecolor=_GRID_COLOR)
@@ -317,7 +318,7 @@ def bar_chart_top_n(
     """
     label      = COLUMN_LABELS.get(column, column)
     direction  = "Lowest" if ascending else "Highest"
-    auto_title = title or f"Top {n} Items by {label} ({direction})"
+    auto_title = title if title is not None else f"Top {n} Items by {label} ({direction})"
 
     plot_df = (
         df.dropna(subset=[column])
@@ -394,7 +395,7 @@ def stacked_macro_bar(
 def grouped_comparison_bar(
     cross_stats: dict[str, dict[str, float]],
     metric: str = "mean",
-    title: str = "Average Nutrition: Drinks vs Food",
+    title: str | None = None,
 ) -> go.Figure:
     """
     Side-by-side grouped bar comparing drinks and food for each shared nutrient.
@@ -577,7 +578,7 @@ def category_box_plot(
         Nutrient column to compare across categories.
     """
     label      = COLUMN_LABELS.get(column, column)
-    auto_title = title or f"{label} by Drink Category"
+    auto_title = title if title is not None else f"{label} by Drink Category"
     plot_df    = df.dropna(subset=[column])
 
     order = (
