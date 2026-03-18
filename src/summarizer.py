@@ -36,7 +36,8 @@ You will be given statistical data for both the drinks and food menus.
 Write exactly ONE concise paragraph (4-6 sentences) that captures the most important
 nutritional highlights across both datasets. Mention specific numbers and notable items.
 Do NOT use headers, bullet points, or multiple paragraphs — plain prose only.
-Caffeine and sugar data are NOT available — do not mention them.
+Caffeine data is NOT available — do not mention it.
+Sugar is not directly measured; net carbs (carbs − fiber) serves as a proxy and may be present in the data.
 Do NOT invent data not present in the context.
 """.strip()
 
@@ -57,7 +58,8 @@ Rules:
 - Support every claim with specific numbers from the data.
 - Name specific menu items when they appear in the top/bottom rankings.
 - Highlight surprising or notable findings (e.g., unusually high sodium, wide calorie ranges).
-- Caffeine and sugar data are NOT available — do not mention or estimate them.
+- Caffeine data is NOT available — do not mention or estimate it.
+- Sugar is not directly measured; net carbs (carbs − fiber) is the available proxy — use that term when relevant.
 - Do NOT invent any data not present in the context.
 - Keep the tone professional but accessible.
 """.strip()
@@ -70,7 +72,8 @@ AVAILABLE DATA:
 
 Rules:
 - Answer ONLY using the data above. Never hallucinate values or item names.
-- If asked about caffeine or sugar, respond: "Caffeine/sugar data is not available in this dataset."
+- If asked about caffeine, respond: "Caffeine data is not available in this dataset."
+- If asked about sugar, clarify that direct sugar data is unavailable but net carbs (carbs − fiber) is the closest available proxy.
 - If a question cannot be answered from the data, say so clearly.
 - Be concise. Use bullet points for lists of items.
 - Always cite specific numbers when available.

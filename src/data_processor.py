@@ -103,6 +103,13 @@ def compute_derived_stats(df: pd.DataFrame) -> dict[str, float | str]:
         both = both[both["fat_g"] > 0]
         result["calories_per_fat_g"] = round(float((both["calories"] / both["fat_g"]).mean()), 2)
 
+    # Compute sugar proxy for drinks (Net carbs = carbs − fiber)
+    if "carb_g" in df.columns and "fiber_g" in df.columns:
+        net = (df["carb_g"] - df["fiber_g"]).dropna()
+        net = net[net >= 0]
+        if not net.empty:
+            result["net_carb_median_g"] = round(float(net.median()), 1)
+
     # Document columns that users might expect but are absent from the source data
     absent = [col for col in ("sugar_g", "caffeine_mg") if col not in df.columns]
     if absent:
