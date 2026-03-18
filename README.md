@@ -1,98 +1,118 @@
-# Starbucks Nutrition Analysis Tool
+# Starbucks Nutrition Analyzer
 
-An LLM-powered nutrition analysis tool for the Starbucks menu. Built with Streamlit, pandas, Plotly, and the Groq LLM API (Llama 3).
+An LLM-powered nutrition analysis dashboard for the full Starbucks menu. Built with Streamlit, pandas, Plotly, and the Groq API (Llama 3).
+
+---
 
 ## Features
 
-- **Data loading & cleaning** — Handles two Starbucks CSVs (drinks and food) with automatic encoding detection, missing-value handling, and deduplication
-- **Descriptive statistics** — Per-dataset and cross-dataset nutritional summaries
-- **Interactive visualizations** — Bar charts, pie charts, scatter plots, and histograms (Plotly)
-- **AI-generated insights** — Groq/Llama 3 produces natural language nutritional summaries
-- **Natural language Q&A** — Ask free-form questions about the menu; the LLM answers using context injection
+- **Dashboard** — key metric cards, macro comparison chart, and top-item rankings across drinks and food
+- **AI Summaries** — one-click nutritional narrative and full structured report
+- **Drinks Analysis** — filterable inventory with Nutri-Grade scoring, macro composition, and insulin-spike scatter visualization
+- **Food Analysis** — filterable inventory with satiety scoring, optimal-choice scatter, and macro distribution
+- **Ask the Menu** — conversational NL query with session memory, grounded in computed dataset statistics
+
+---
 
 ## Requirements
 
 - Python 3.12+
 - A Groq API key
 
+---
+
 ## Setup
 
-1. **Clone the repository**
-   ```bash
-   git clone <repo-url>
-   cd amaris-technical-test
-   ```
+**1. Clone the repository**
+```bash
+git clone <repo-url>
+cd amaris-technical-test
+```
 
-2. **Create and activate a virtual environment**
-   ```bash
-   python -m venv .venv
-   # Windows
-   .venv\Scripts\activate
-   # macOS / Linux
-   source .venv/bin/activate
-   ```
+**2. Create and activate a virtual environment**
+```bash
+python -m venv .venv
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+# Windows
+.venv\Scripts\activate
 
-4. **Configure your Groq API key**
-   ```bash
-   # Edit .env and replace the placeholder with your actual key
-   GROQ_API_KEY=your_groq_api_key_here
-   ```
+# macOS / Linux
+source .venv/bin/activate
+```
 
-5. **Run the app**
-   ```bash
-   streamlit run app/main.py
-   ```
-   The app opens at `http://localhost:8501`.
+**3. Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+**4. Add your Groq API key**
+
+Create a `.env` file in the project root:
+```
+GROQ_API_KEY=your_key_here
+```
+Get a free key at [console.groq.com](https://console.groq.com). The app runs without a key — AI features will be disabled until one is provided.
+
+**5. Run the app**
+```bash
+streamlit run app/main.py
+```
+Opens at `http://localhost:8501`.
+
+---
 
 ## Project Structure
 
 ```
 amaris-technical-test/
-├── data/                        # Starbucks CSV datasets
+├── data/
 │   ├── starbucks-menu-nutrition-drinks.csv
 │   └── starbucks-menu-nutrition-food.csv
-├── src/                         # Business logic (no Streamlit dependency)
-│   ├── data_loader.py           # CSV ingestion and encoding detection
-│   ├── data_processor.py        # Cleaning pipeline, statistics, filtering
-│   ├── visualizer.py            # Plotly chart factories
-│   ├── llm_client.py            # Groq API wrapper
-│   └── summarizer.py            # Prompt engineering and NL query engine
-├── app/                         # Streamlit UI layer
-│   ├── main.py                  # Entry point, sidebar, session state
-│   └── pages/
-│       ├── overview.py          # Dataset stats and data quality report
-│       ├── visualizations.py    # Interactive charts
-│       ├── llm_summary.py       # AI-generated nutritional insights
-│       └── nl_query.py          # Natural language Q&A
+│
+├── src/                        # Business logic
+│   ├── data/
+│   │   ├── loader.py           # Load CSV ingestion, encoding detection
+│   │   ├── cleaner.py          # Cleaning pipeline, category imputation
+│   │   └── processor.py        # Statistics, filtering, Plotly chart factories
+│   └── llm/
+│       ├── client.py           # Groq API wrapper
+│       └── summarizer.py       # Prompt engineering, context builder, NL query engine
+│
+├── app/                        # Streamlit UI layer
+│   ├── main.py                 # Entry point, navigation, session state
+│   ├── static/styles.css       # Global CSS
+│   ├── pages/
+│   │   ├── dashboard.py
+│   │   ├── drinks.py
+│   │   ├── food.py
+│   │   ├── console.py
+│   │   └── settings.py
+│   ├── charts/                 # Visualization
+│   │   ├── drinks.py
+│   │   └── food.py
+│   ├── components/
+│   │   ├── cards.py
+│   │   ├── tables.py
+│   │   └── ui.py               # Layout and banner HTML helpers
+│   └── utils/
+│       ├── food_categories.py
+│       └── nutri_grade.py
+│
 ├── requirements.txt
-├── .env.example
+├── .env                        # Add your own
 └── README.md
 ```
 
-## Usage
-
-- **Upload your own CSVs** via the sidebar file uploaders, or use the bundled datasets in `data/`
-- **Filter the data** with the sidebar sliders (max calories, max fat, etc.)
-- **Generate insights** on the "LLM Insights" page (requires Groq API key)
-- **Ask questions** like "What is the highest calorie food item?" on the "Ask a Question" page
+---
 
 ## Data Notes
 
-- Approximately 40% of drink entries have no nutritional data in the source CSV; these rows are automatically removed during cleaning
-- Caffeine content is **not available** in the source datasets
-- The food CSV uses UTF-16 encoding, which is handled automatically
+| Dataset | Rows | Encoding | Notes |
+|---|---|---|---|
+| Drinks | ~240 raw | UTF-8 / Latin-1 (auto-detected) | ~40% of rows have missing values; filled via category-median imputation |
+| Food | ~80 rows | UTF-16 LE with BOM | All rows have complete data |
 
-## Design Decisions
+- **Caffeine** data is not available in either dataset.
+- **Sugar** is not directly measured; net carbs (carbs − fiber) is used as a proxy.
 
-| Decision | Rationale |
-|---|---|
-| Streamlit over Flask | Better suited for data apps; built-in widgets, no HTML/CSS needed |
-| Context injection over RAG | Datasets are small and structured — injecting computed stats is more accurate than retrieval |
-| `src/` isolated from `app/` | Business logic is independently testable without Streamlit |
-| `chardet` + hardcoded UTF-16 fallback | Reliable encoding detection with a safety net for the known food CSV encoding |
-| `pd.to_numeric(errors='coerce')` | Silently converts any bad values to NaN instead of crashing |
+---
