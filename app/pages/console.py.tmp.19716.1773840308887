@@ -14,6 +14,8 @@ _EXAMPLES = [
     "Which drinks have the most sodium?",
     "What are the top 5 lowest-calorie drinks?",
     "Which food item has the most protein?",
+    "How do average calories compare between drinks and food?",
+    "Is there any caffeine data available?",
     "Which drink category has the highest average calories?",
     "What food items have more than 20g of protein?",
 ]
@@ -71,7 +73,7 @@ def render() -> None:
         with st.chat_message("assistant"):
             with st.spinner("Thinking…"):
                 try:
-                    answer = answer_query(groq_client, st.session_state.chat_history, drinks_df, food_df)
+                    answer = answer_query(groq_client, question, drinks_df, food_df)
                 except RuntimeError as exc:
                     answer = f"Error: {exc}"
             st.markdown(answer)

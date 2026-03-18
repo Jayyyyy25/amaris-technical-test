@@ -1,7 +1,7 @@
 """
 Summarizer
 
-Builds the LLM context block from pre-computed DataFrame statistics and
+Builds a structured ``menu_statistics`` dict from DataFrame statistics and
 constructs prompts for two distinct features:
 
 1. generate_summary()  — one-shot nutritional narrative covering both datasets
@@ -13,16 +13,12 @@ delegate all API calls to :class:`~src.llm_client.GroqClient`.
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
 from src.llm_client import GroqClient
-from src.data_processor import (
-    compute_descriptive_stats,
-    compute_cross_dataset_stats,
-    compute_derived_stats,
-    get_top_n,
-    COLUMN_LABELS,
-)
+from src.data_processor import compute_derived_stats
 
 
 # ---------------------------------------------------------------------------
@@ -30,48 +26,67 @@ from src.data_processor import (
 # ---------------------------------------------------------------------------
 
 _BRIEF_SUMMARY_SYSTEM_PROMPT = """
-You are a professional nutritionist reviewing Starbucks menu data.
-You will be given statistical data for both the drinks and food menus.
+You are a nutrition analyst specialising in Starbucks menu items.
 
-Write exactly ONE concise paragraph (4-6 sentences) that captures the most important
-nutritional highlights across both datasets. Mention specific numbers and notable items.
-Do NOT use headers, bullet points, or multiple paragraphs — plain prose only.
-Caffeine data is NOT available — do not mention it.
-Sugar is not directly measured; net carbs (carbs − fiber) serves as a proxy and may be present in the data.
-Do NOT invent data not present in the context.
+You will be given a JSON format aggregated nutrition statistics describing the full Starbucks menu, including both beverages and food.
+
+Your task is to generate a VERY concise whole-menu nutrition summary.
+
+Requirements:
+- Write ONLY 4-5 sentences.
+- Describe overall calorie density patterns across drinks and food.
+- Mention major sugar / fat drivers.
+- Identify generally healthier categories vs indulgent categories.
+- Mention that customization or portion size affects nutrition impact.
+- Focus on high-level patterns, not specific menu items.
+- Do not use bullet points or lists.
+- Do not give generic health advice.
+- Caffeine data is NOT available, so do NOT mention it.
+- Do NOT invent data not present in the context.
+
+Output:
+A single short paragraph summary.
 """.strip()
 
 _SUMMARY_SYSTEM_PROMPT = """
-You are a professional nutritionist and data analyst reviewing Starbucks menu data.
-You will be given a structured statistical summary of both the drinks and food menus.
+You are a nutrition analyst specialising in Starbucks menu items.
 
-Your task is to produce a clear, engaging nutritional analysis report.
+You will be given a JSON format aggregated nutrition statistics describing the full Starbucks menu, including both beverages and food.
+
+Your task is to generate a structured and practical nutrition insight summary for the WHOLE MENU.
 
 Format your response with these sections:
 ## Overview
-## Drinks Analysis
-## Food Analysis
-## Drinks vs Food Comparison
-## Health Recommendations
+## Drinks Calorie and Sugar Patterns
+## Food Nutrition Landscape
+## Hidden Nutrition Insights and Model Findings (Compare deeper observations and include any important patterns detected by the model that may not be obvious from the raw stats alone)
+## Health Recommendations & Decision Guidance (e.g. weight control, study energy, meal replacement, occasional treat)
 
 Rules:
-- Support every claim with specific numbers from the data.
-- Name specific menu items when they appear in the top/bottom rankings.
+- Cover BOTH drinks and food categories.
+- The summary must be informative but not overly long or academic (~250–350 words).
+- Focus on explaining nutrition patterns and decision insights rather than listing specific menu items and their nutrition stats.
 - Highlight surprising or notable findings (e.g., unusually high sodium, wide calorie ranges).
 - Caffeine data is NOT available — do not mention or estimate it.
 - Sugar is not directly measured; net carbs (carbs − fiber) is the available proxy — use that term when relevant.
 - Do NOT invent any data not present in the context.
 - Keep the tone professional but accessible.
+- Use bullet points where appropriate.
 """.strip()
 
 _QUERY_SYSTEM_PROMPT_TEMPLATE = """
-You are a precise data analyst assistant with access to Starbucks menu nutritional data.
+You are an expert Starbucks Nutrition Analyst and a helpful "AI Barista". 
+Your job is to answer customer questions about the Starbucks menu accurately and concisely.
 
-AVAILABLE DATA:
+AVAILABLE DATA (JSON):
 {context}
+
+Conversation History:
+{history}
 
 Rules:
 - Answer ONLY using the data above. Never hallucinate values or item names.
+- Always refer to the history of the conversation to answer follow-up questions if the history is non-empty.
 - If asked about caffeine, respond: "Caffeine data is not available in this dataset."
 - If asked about sugar, clarify that direct sugar data is unavailable but net carbs (carbs − fiber) is the closest available proxy.
 - If a question cannot be answered from the data, say so clearly.
@@ -84,16 +99,43 @@ Rules:
 # Context builder
 # ---------------------------------------------------------------------------
 
-def build_context_block(
+def _top_n_records(
+    df: pd.DataFrame,
+    sort_col: str,
+    fields: list[str],
+    n: int,
+    ascending: bool = False,
+) -> list[dict]:
+    """Return top-n rows as a list of dicts with only the specified fields."""
+    if sort_col not in df.columns:
+        return []
+    subset = [f for f in fields if f in df.columns]
+    top = (
+        df.dropna(subset=[sort_col])
+        .sort_values(sort_col, ascending=ascending)
+        .head(n)[subset]
+    )
+    records = []
+    for _, row in top.iterrows():
+        record = {}
+        for f in subset:
+            val = row[f]
+            record[f] = round(float(val), 1) if isinstance(val, float) else val
+        records.append(record)
+    return records
+
+
+def build_menu_statistics(
     drinks_df: pd.DataFrame,
     food_df: pd.DataFrame,
     top_n: int = 5,
-) -> str:
-    """Serialize dataset statistics into a compact, LLM-readable text block.
+) -> dict:
+    """
+    Build a structured ``menu_statistics`` dict from both DataFrames.
 
-    Includes per-column stats, top/bottom-N items for key nutrients,
-    cross-dataset comparison, derived ratios, and a note about absent columns.
-    Designed to stay under ~1 200 tokens.
+    The dict is designed to be JSON-serialized and injected into LLM prompts.
+    It includes per-dataset averages, calorie ranges, ranked item lists, derived
+    ratios, and cross-dataset comparisons.
 
     Parameters
     ----------
@@ -102,84 +144,164 @@ def build_context_block(
     food_df:
         Cleaned food DataFrame.
     top_n:
-        Number of top/bottom items to include per nutrient ranking.
+        Number of items to include in each ranked list.
 
     Returns
     -------
-    str
-        Multi-line context block ready for injection into a prompt.
+    dict
+        Structured statistics ready for ``json.dumps()``.
     """
-    lines: list[str] = []
+    stats: dict = {}
 
-    # ── Drinks ──────────────────────────────────────────────────────────
-    d_stats   = compute_descriptive_stats(drinks_df)
-    d_derived = compute_derived_stats(drinks_df)
-    n_imputed = int(drinks_df["is_imputed"].sum()) if "is_imputed" in drinks_df.columns else 0
+    # ── Drinks ──────────────────────────────────────────────────────────────
+    d = drinks_df.copy()
+    d_derived = compute_derived_stats(d)
+    n_imputed = int(d["is_imputed"].sum()) if "is_imputed" in d.columns else 0
 
-    lines.append(f"DRINKS DATASET ({len(drinks_df)} items, {n_imputed} with imputed values):")
-    lines.append(_format_stats_block(d_stats))
+    if "carb_g" in d.columns and "fiber_g" in d.columns:
+        d["net_carbs_g"] = (d["carb_g"] - d["fiber_g"]).clip(lower=0).round(1)
 
-    lines.append(f"  Fat-to-protein ratio (avg): {d_derived.get('fat_to_protein_ratio', 'N/A')}")
-    lines.append(f"  Carb-to-protein ratio (avg): {d_derived.get('carb_to_protein_ratio', 'N/A')}")
+    drinks_stats: dict = {
+        "menu_size": len(d),
+        "imputed_count": n_imputed,
+    }
 
-    lines.append(f"\n  Top {top_n} highest-calorie drinks:")
-    lines.append(_format_top_n(drinks_df, "calories", top_n, ascending=False))
+    for col, key in [("calories", "average_calories"), ("fat_g", "average_fat_g"),
+                     ("protein_g", "average_protein_g"), ("sodium_mg", "average_sodium_mg")]:
+        if col in d.columns:
+            drinks_stats[key] = round(float(d[col].mean(skipna=True)), 1)
 
-    lines.append(f"\n  Top {top_n} lowest-calorie drinks:")
-    lines.append(_format_top_n(drinks_df, "calories", top_n, ascending=True))
+    if "calories" in d.columns:
+        drinks_stats["calorie_range"] = {
+            "min": round(float(d["calories"].min(skipna=True)), 1),
+            "max": round(float(d["calories"].max(skipna=True)), 1),
+        }
 
-    lines.append(f"\n  Top {top_n} highest-sodium drinks:")
-    lines.append(_format_top_n(drinks_df, "sodium_mg", top_n, ascending=False))
+    if "net_carbs_g" in d.columns:
+        drinks_stats["average_net_carbs_g"] = round(float(d["net_carbs_g"].mean(skipna=True)), 1)
+        drinks_stats["highest_sugar_traps_by_net_carbs"] = _top_n_records(
+            d, "net_carbs_g", ["item_name", "category", "net_carbs_g", "calories"], top_n,
+        )
+        drinks_stats["safest_low_carb_options"] = _top_n_records(
+            d, "net_carbs_g", ["item_name", "category", "net_carbs_g", "calories"], top_n,
+            ascending=True,
+        )
 
-    if "category" in drinks_df.columns:
-        lines.append("\n  Average calories by drink category:")
-        cat_means = (
-            drinks_df.groupby("category")["calories"]
+    if "calories" in d.columns:
+        drinks_stats["highest_calorie_drinks"] = _top_n_records(
+            d, "calories", ["item_name", "category", "calories", "fat_g", "net_carbs_g"], top_n,
+        )
+
+    if "sodium_mg" in d.columns:
+        drinks_stats["highest_sodium_drinks"] = _top_n_records(
+            d, "sodium_mg", ["item_name", "category", "sodium_mg", "calories"], top_n,
+        )
+
+    if "category" in d.columns and "calories" in d.columns:
+        drinks_stats["avg_calories_by_category"] = (
+            d.groupby("category")["calories"]
             .mean()
             .sort_values(ascending=False)
             .round(1)
-        )
-        for cat, val in cat_means.items():
-            lines.append(f"    {cat}: {val} kcal")
-
-    # ── Food ────────────────────────────────────────────────────────────
-    f_stats   = compute_descriptive_stats(food_df)
-    f_derived = compute_derived_stats(food_df)
-
-    lines.append(f"\nFOOD DATASET ({len(food_df)} items):")
-    lines.append(_format_stats_block(f_stats))
-
-    lines.append(f"  Fat-to-protein ratio (avg): {f_derived.get('fat_to_protein_ratio', 'N/A')}")
-    lines.append(f"  Carb-to-protein ratio (avg): {f_derived.get('carb_to_protein_ratio', 'N/A')}")
-
-    lines.append(f"\n  Top {top_n} highest-calorie food items:")
-    lines.append(_format_top_n(food_df, "calories", top_n, ascending=False))
-
-    lines.append(f"\n  Top {top_n} lowest-calorie food items:")
-    lines.append(_format_top_n(food_df, "calories", top_n, ascending=True))
-
-    lines.append(f"\n  Top {top_n} highest-protein food items:")
-    lines.append(_format_top_n(food_df, "protein_g", top_n, ascending=False))
-
-    # ── Cross-dataset ────────────────────────────────────────────────────
-    cross = compute_cross_dataset_stats(drinks_df, food_df)
-    lines.append("\nCROSS-DATASET COMPARISON (mean values):")
-    for col, vals in cross.items():
-        label = COLUMN_LABELS.get(col, col)
-        lines.append(
-            f"  {label}: drinks={vals['drinks_mean']}, food={vals['food_mean']}  "
-            f"(food is {round(vals['food_mean'] / vals['drinks_mean'], 1)}× higher)"
-            if vals["drinks_mean"] > 0
-            else f"  {label}: drinks={vals['drinks_mean']}, food={vals['food_mean']}"
+            .to_dict()
         )
 
-    # ── Data limitations ─────────────────────────────────────────────────
-    absent = d_derived.get("missing_columns", "")
-    if absent:
-        lines.append(f"\nNOTE: The following columns are absent from both datasets: {absent}.")
-        lines.append("Do not reference or estimate these values.")
+    if "fat_to_protein_ratio" in d_derived:
+        drinks_stats["avg_fat_to_protein_ratio"] = d_derived["fat_to_protein_ratio"]
+    if "carb_to_protein_ratio" in d_derived:
+        drinks_stats["avg_carb_to_protein_ratio"] = d_derived["carb_to_protein_ratio"]
 
-    return "\n".join(lines)
+    stats["drinks_analysis"] = drinks_stats
+
+    # ── Food ────────────────────────────────────────────────────────────────
+    f = food_df.copy()
+    f_derived = compute_derived_stats(f)
+
+    food_stats: dict = {"menu_size": len(f)}
+
+    for col, key in [("calories", "average_calories"), ("fat_g", "average_fat_g"),
+                     ("protein_g", "average_protein_g"), ("fiber_g", "average_fiber_g")]:
+        if col in f.columns:
+            food_stats[key] = round(float(f[col].mean(skipna=True)), 1)
+
+    if "calories" in f.columns:
+        food_stats["calorie_range"] = {
+            "min": round(float(f["calories"].min(skipna=True)), 1),
+            "max": round(float(f["calories"].max(skipna=True)), 1),
+        }
+
+    if all(c in f.columns for c in ("protein_g", "fiber_g", "calories")):
+        satiety = (
+            (f["protein_g"] + f["fiber_g"])
+            / f["calories"].replace(0, float("nan"))
+            * 100
+        ).dropna()
+        food_stats["avg_satiety_score"] = round(float(satiety.mean()), 1)
+
+    if "calories" in f.columns:
+        food_stats["most_calorie_dense_items"] = _top_n_records(
+            f, "calories", ["item_name", "calories", "fat_g", "protein_g"], top_n,
+        )
+        food_stats["lowest_calorie_items"] = _top_n_records(
+            f, "calories", ["item_name", "calories", "protein_g"], top_n, ascending=True,
+        )
+
+    if "protein_g" in f.columns:
+        food_stats["highest_satiety_efficiency_items"] = _top_n_records(
+            f, "protein_g", ["item_name", "protein_g", "fiber_g", "calories"], top_n,
+        )
+
+    if "fat_g" in f.columns and "protein_g" in f.columns:
+        ratio_df = f[["item_name", "fat_g", "protein_g", "calories"]].dropna()
+        ratio_df = ratio_df[ratio_df["protein_g"] > 0].copy()
+        ratio_df["fat_protein_ratio"] = (ratio_df["fat_g"] / ratio_df["protein_g"]).round(2)
+        food_stats["worst_fat_to_protein_ratio_items"] = [
+            {
+                "item": row["item_name"],
+                "ratio": row["fat_protein_ratio"],
+                "calories": round(row["calories"], 1),
+                "protein_g": round(row["protein_g"], 1),
+            }
+            for _, row in ratio_df.sort_values("fat_protein_ratio", ascending=False).head(top_n).iterrows()
+        ]
+
+    if "fat_to_protein_ratio" in f_derived:
+        food_stats["avg_fat_to_protein_ratio"] = f_derived["fat_to_protein_ratio"]
+
+    stats["food_analysis"] = food_stats
+
+    # ── Comparative insights ─────────────────────────────────────────────────
+    comparative: dict = {}
+
+    if "calories" in drinks_df.columns and "calories" in food_df.columns:
+        d_avg = round(float(drinks_df["calories"].mean(skipna=True)), 1)
+        f_avg = round(float(food_df["calories"].mean(skipna=True)), 1)
+        diff  = round(f_avg - d_avg, 1)
+        comparative["avg_calories_drinks"]           = d_avg
+        comparative["avg_calories_food"]             = f_avg
+        comparative["food_vs_drink_avg_calorie_diff"] = (
+            f"+{diff} calories in food" if diff >= 0 else f"{diff} calories in food"
+        )
+        comparative["worst_case_combo_calories"] = int(
+            drinks_df["calories"].max(skipna=True) + food_df["calories"].max(skipna=True)
+        )
+
+    for col, d_key, f_key in [
+        ("protein_g", "avg_protein_drinks_g", "avg_protein_food_g"),
+        ("fat_g",     "avg_fat_drinks_g",     "avg_fat_food_g"),
+    ]:
+        if col in drinks_df.columns and col in food_df.columns:
+            comparative[d_key] = round(float(drinks_df[col].mean(skipna=True)), 1)
+            comparative[f_key] = round(float(food_df[col].mean(skipna=True)), 1)
+
+    stats["comparative_insights"] = comparative
+    stats["data_notes"] = [
+        "Caffeine data is not available in this dataset.",
+        "Direct sugar data is not available; net carbs (carbs − fiber) is used as a proxy.",
+        f"Drinks: {n_imputed} items had missing values filled via category-based median imputation.",
+    ]
+
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +314,7 @@ def generate_brief_summary(
     food_df: pd.DataFrame,
 ) -> str:
     """Generate a single-paragraph headline summary for the dashboard."""
-    context = build_context_block(drinks_df, food_df, top_n=3)
+    context = json.dumps(build_menu_statistics(drinks_df, food_df, top_n=3), indent=2)
     return client.complete(
         system_prompt=_BRIEF_SUMMARY_SYSTEM_PROMPT,
         user_message=context,
@@ -206,23 +328,8 @@ def generate_summary(
     drinks_df: pd.DataFrame,
     food_df: pd.DataFrame,
 ) -> str:
-    """Generate a structured nutritional insight report for both datasets.
-
-    Parameters
-    ----------
-    client:
-        Configured :class:`~src.llm_client.GroqClient` instance.
-    drinks_df:
-        Cleaned drinks DataFrame.
-    food_df:
-        Cleaned food DataFrame.
-
-    Returns
-    -------
-    str
-        Markdown-formatted nutritional analysis.
-    """
-    context = build_context_block(drinks_df, food_df, top_n=5)
+    """Generate a structured nutritional insight report for both datasets."""
+    context = json.dumps(build_menu_statistics(drinks_df, food_df, top_n=5), indent=2)
     return client.complete(
         system_prompt=_SUMMARY_SYSTEM_PROMPT,
         user_message=context,
@@ -231,74 +338,36 @@ def generate_summary(
     )
 
 
-def answer_query(
+def answer_query_with_history(
     client: GroqClient,
-    question: str,
+    history: list[dict[str, str]],
     drinks_df: pd.DataFrame,
     food_df: pd.DataFrame,
 ) -> str:
-    """Answer a natural-language question about the menu data.
-
-    The context block is injected into the system prompt so the LLM is
-    grounded in actual computed statistics — it cannot hallucinate item
-    names or values that are not present in the data.
+    """Answer using full conversation history so follow-up questions work.
 
     Parameters
     ----------
     client:
         Configured :class:`~src.llm_client.GroqClient` instance.
-    question:
-        Free-form user question (e.g. ``"What's the lowest-calorie drink?"``).
+    history:
+        All turns so far as ``[{"role": "user"|"assistant", "content": "..."}]``.
+        The latest user message must already be appended before calling this.
     drinks_df:
         Cleaned drinks DataFrame.
     food_df:
         Cleaned food DataFrame.
-
-    Returns
-    -------
-    str
-        The model's answer, grounded in the injected context.
     """
-    context      = build_context_block(drinks_df, food_df, top_n=8)
-    system_prompt = _QUERY_SYSTEM_PROMPT_TEMPLATE.format(context=context)
+    context          = json.dumps(build_menu_statistics(drinks_df, food_df, top_n=8), indent=2)
+    prior_turns      = history[:-1]   # all turns except the latest user question
+    current_question = history[-1]["content"] if history else ""
+    system_prompt    = _QUERY_SYSTEM_PROMPT_TEMPLATE.format(
+        context=context,
+        history=json.dumps(prior_turns, indent=2),
+    )
     return client.complete(
         system_prompt=system_prompt,
-        user_message=question,
-        temperature=0.1,   # low temp → factual, deterministic
+        user_message=current_question,
+        temperature=0.3,
         max_tokens=1024,
     )
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _format_stats_block(stats: dict[str, dict[str, float]]) -> str:
-    """Format a stats dict as an indented multi-line string."""
-    lines = []
-    for col, s in stats.items():
-        label = COLUMN_LABELS.get(col, col)
-        lines.append(
-            f"  {label}: mean={s['mean']}, median={s['median']}, "
-            f"min={s['min']}, max={s['max']}, total={s['total']}"
-        )
-    return "\n".join(lines)
-
-
-def _format_top_n(
-    df: pd.DataFrame,
-    column: str,
-    n: int,
-    ascending: bool,
-) -> str:
-    """Format top-N rows as a numbered list with item name and value."""
-    if column not in df.columns:
-        return "    (data not available)"
-    label   = COLUMN_LABELS.get(column, column)
-    top_df  = get_top_n(df, column, n=n, ascending=ascending)
-    lines   = []
-    for i, row in top_df.iterrows():
-        name = row.get("item_name", "Unknown")
-        val  = row.get(column, "N/A")
-        lines.append(f"    {i + 1}. {name} — {val} {label}")
-    return "\n".join(lines) if lines else "    (no data)"

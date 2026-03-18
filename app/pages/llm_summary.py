@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.summarizer import generate_summary, build_context_block
+import json
+
+from src.summarizer import generate_summary, build_menu_statistics
 
 
 def render() -> None:
@@ -59,8 +61,8 @@ def render() -> None:
         )
 
         with st.expander("🔍 View context sent to LLM"):
-            ctx = build_context_block(drinks_df, food_df)
-            st.text(ctx)
+            ctx = json.dumps(build_menu_statistics(drinks_df, food_df), indent=2)
+            st.code(ctx, language="json")
             st.caption(f"{len(ctx)} characters · ~{len(ctx) // 4} tokens (estimated)")
     else:
         st.info("No summary generated yet. Click **Generate Summary** above.")
