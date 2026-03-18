@@ -6,9 +6,10 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src.data_processor import compute_descriptive_stats, compute_derived_stats, COLUMN_LABELS
+from src.data.processor import compute_descriptive_stats, compute_derived_stats, COLUMN_LABELS
 from app.components.cards import metric_card
 from app.components.tables import style_inventory
+from app.components.ui import chart_header, filter_label, insight_card, page_title, section_heading, spacer
 from app.charts.food import optimal_scatter, macro_distribution_bar
 from app.utils.food_categories import assign as assign_category, PILL_MAP
 
@@ -25,18 +26,14 @@ def render() -> None:
     food_df["food_category"] = food_df["item_name"].apply(assign_category)
 
     # ── Header ────────────────────────────────────────────────────────────────
-    st.markdown(
-        '<h2 style="margin:0 0 4px 0;font-size:26px;font-weight:800;color:#1a1a1a;">'
-        'Food Nutrition Analysis</h2>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(page_title("Food Nutrition Analysis"), unsafe_allow_html=True)
 
     # ── Quick Filters ─────────────────────────────────────────────────────────
     cal_max = int(food_df["calories"].max()) if "calories" in food_df.columns else 1000
 
     qf1, qf2, qf3 = st.columns([3, 2, 1], vertical_alignment="bottom")
     with qf1:
-        st.markdown('<p class="filter-label">Category Filter</p>', unsafe_allow_html=True)
+        st.markdown(filter_label("Category Filter"), unsafe_allow_html=True)
         active_cats = st.pills(
             "food_category_filter",
             list(PILL_MAP.keys()),
@@ -102,7 +99,7 @@ def render() -> None:
             note_positive=True,
         ), unsafe_allow_html=True)
 
-    st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+    st.markdown(spacer(16), unsafe_allow_html=True)
 
     # ── AI Insight ────────────────────────────────────────────────────────────
     llm_ok  = groq_client is not None and groq_client.is_available()
@@ -110,19 +107,12 @@ def render() -> None:
 
     if llm_ok:
         if insight:
-            st.markdown(f"""
-<div class="insight-card">
-  <div>
-    <div class="insight-title">✦ AI Insights Summary</div>
-    <p class="insight-text">{insight}</p>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+            st.markdown(insight_card(insight), unsafe_allow_html=True)
         else:
             if st.button("✦ Generate AI Insight", key="f_gen_insight"):
                 with st.spinner("Generating insight…"):
                     try:
-                        from src.summarizer import answer_query
+                        from src.llm.summarizer import answer_query
                         drinks_df = st.session_state.get("drinks_df", pd.DataFrame())
                         st.session_state["food_insight"] = answer_query(
                             groq_client,
@@ -137,34 +127,27 @@ def render() -> None:
     ch1, ch2 = st.columns(2)
 
     with ch1:
-        st.markdown("""
-<div class="chart-card">
-  <div class="chart-card-title">Optimal Choice</div>
-  <div class="chart-card-subtitle">Top-left = high protein, low calorie (best value)</div>
-</div>
-""", unsafe_allow_html=True)
+        st.markdown(chart_header(
+            "Optimal Choice",
+            "Top-left = high protein, low calorie (best value)",
+        ), unsafe_allow_html=True)
         if not df.empty:
             st.plotly_chart(optimal_scatter(df), use_container_width=True)
 
     with ch2:
-        st.markdown("""
-<div class="chart-card">
-  <div class="chart-card-title">Macro-Nutrient Distribution</div>
-  <div class="chart-card-subtitle">% of macro calories — top 12 items by calorie count</div>
-</div>
-""", unsafe_allow_html=True)
+        st.markdown(chart_header(
+            "Macro-Nutrient Distribution",
+            "% of macro calories — top 12 items by calorie count",
+        ), unsafe_allow_html=True)
         if not df.empty:
             st.plotly_chart(macro_distribution_bar(df, n=min(12, len(df))), use_container_width=True)
 
-    st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
+    st.markdown(spacer(24), unsafe_allow_html=True)
 
     # ── Inventory Table ───────────────────────────────────────────────────────
     inv_l, inv_r = st.columns([4, 1])
     with inv_l:
-        st.markdown(
-            '<h3 style="font-size:20px;font-weight:700;color:#1a1a1a;margin:0 0 8px 0;">Food Inventory</h3>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(section_heading("Food Inventory"), unsafe_allow_html=True)
     with inv_r:
         st.caption(f"Showing {len(df)} items")
 

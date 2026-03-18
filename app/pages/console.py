@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.summarizer import answer_query_with_history as answer_query
+from src.llm.summarizer import answer_query_with_history as answer_query
 
 
 _EXAMPLES = [
@@ -38,7 +38,6 @@ def render() -> None:
         )
         return
 
-    # ── Initialise chat history ───────────────────────────────────────────────
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
@@ -54,20 +53,16 @@ def render() -> None:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # ── Handle pending question from example button ───────────────────────────
     pending = st.session_state.pop("_pending_question", None)
 
-    # ── Chat input ────────────────────────────────────────────────────────────
     user_input = st.chat_input("Ask a question about the menu…")
     question   = user_input or pending
 
     if question:
-        # Display user message
         with st.chat_message("user"):
             st.markdown(question)
         st.session_state.chat_history.append({"role": "user", "content": question})
 
-        # Generate and display assistant reply
         with st.chat_message("assistant"):
             with st.spinner("Thinking…"):
                 try:

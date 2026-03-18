@@ -6,9 +6,10 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src.data_processor import compute_descriptive_stats, compute_derived_stats, COLUMN_LABELS
+from src.data.processor import compute_descriptive_stats, compute_derived_stats, COLUMN_LABELS
 from app.components.cards import metric_card
 from app.components.tables import style_inventory
+from app.components.ui import chart_header, filter_label, insight_card, page_title, section_heading, spacer
 from app.charts.drinks import macro_stacked_bar, insulin_spike_scatter
 from app.utils.nutri_grade import score as nutri_score, GRADE_STYLE
 
@@ -22,18 +23,14 @@ def render() -> None:
     groq_client = st.session_state.get("groq_client")
 
     # ── Header ────────────────────────────────────────────────────────────────
-    st.markdown(
-        '<h2 style="margin:0 0 4px 0;font-size:26px;font-weight:800;color:#1a1a1a;">'
-        'Drink Nutrition Analysis</h2>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(page_title("Drink Nutrition Analysis"), unsafe_allow_html=True)
 
     # ── Quick Filters ─────────────────────────────────────────────────────────
     cal_max = int(drinks_df["calories"].max()) if "calories" in drinks_df.columns else 1000
 
     qf1, qf2, qf3 = st.columns([3, 2, 1], vertical_alignment="bottom")
     with qf1:
-        st.markdown('<p class="filter-label">Quick Filters</p>', unsafe_allow_html=True)
+        st.markdown(filter_label("Quick Filters"), unsafe_allow_html=True)
         active_pills = st.pills(
             "drinks_quick_filters",
             ["🥑 Keto Friendly", "💪 Protein Boost", "🧂 Low Sodium"],
@@ -100,7 +97,7 @@ def render() -> None:
     with c4:
         st.markdown(metric_card("Avg Sodium", "🧂", _s("sodium_mg", "mean", 1), "mg"), unsafe_allow_html=True)
 
-    st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+    st.markdown(spacer(16), unsafe_allow_html=True)
 
     # ── AI Insight ────────────────────────────────────────────────────────────
     llm_ok  = groq_client is not None and groq_client.is_available()
@@ -108,19 +105,12 @@ def render() -> None:
 
     if llm_ok:
         if insight:
-            st.markdown(f"""
-<div class="insight-card">
-  <div>
-    <div class="insight-title">✦ AI Insights Summary</div>
-    <p class="insight-text">{insight}</p>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+            st.markdown(insight_card(insight), unsafe_allow_html=True)
         else:
             if st.button("✦ Generate AI Insight", key="d_gen_insight"):
                 with st.spinner("Generating insight…"):
                     try:
-                        from src.summarizer import answer_query
+                        from src.llm.summarizer import answer_query
                         food_df = st.session_state.get("food_df", pd.DataFrame())
                         st.session_state["drinks_insight"] = answer_query(
                             groq_client,
@@ -135,36 +125,29 @@ def render() -> None:
     ch1, ch2 = st.columns(2)
 
     with ch1:
-        st.markdown("""
-<div class="chart-card">
-  <div class="chart-card-title">Macro Composition by Category</div>
-  <div class="chart-card-subtitle">% of total macro calories — net carbs, fat, protein</div>
-</div>
-""", unsafe_allow_html=True)
+        st.markdown(chart_header(
+            "Macro Composition by Category",
+            "% of total macro calories — net carbs, fat, protein",
+        ), unsafe_allow_html=True)
         if "category" in df.columns and not df.empty:
             st.plotly_chart(macro_stacked_bar(df), use_container_width=True)
         else:
             st.info("Category data required for this chart.")
 
     with ch2:
-        st.markdown("""
-<div class="chart-card">
-  <div class="chart-card-title">Insulin Spike Risk</div>
-  <div class="chart-card-subtitle">Total calories vs net carbs — higher = greater insulin response</div>
-</div>
-""", unsafe_allow_html=True)
+        st.markdown(chart_header(
+            "Insulin Spike Risk",
+            "Total calories vs net carbs — higher = greater insulin response",
+        ), unsafe_allow_html=True)
         if not df.empty:
             st.plotly_chart(insulin_spike_scatter(df), use_container_width=True)
 
-    st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
+    st.markdown(spacer(24), unsafe_allow_html=True)
 
     # ── Inventory Table ───────────────────────────────────────────────────────
     inv_l, inv_r = st.columns([4, 1])
     with inv_l:
-        st.markdown(
-            '<h3 style="font-size:20px;font-weight:700;color:#1a1a1a;margin:0 0 8px 0;">Drink Inventory</h3>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(section_heading("Drink Inventory"), unsafe_allow_html=True)
     with inv_r:
         st.caption(f"Showing {len(df)} drinks")
 

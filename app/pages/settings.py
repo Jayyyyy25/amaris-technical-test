@@ -24,8 +24,8 @@ def _save_upload(uploaded, suffix: str) -> Path | None:
 
 
 def _load_data(drinks_src, food_src) -> None:
-    from src.data_loader import load_csv
-    from src.data_cleaner import clean_dataset
+    from src.data.loader import load_csv
+    from src.data.cleaner import clean_dataset
     try:
         st.session_state.drinks_df     = clean_dataset(load_csv(drinks_src, "drinks"), "drinks")
         st.session_state.food_df       = clean_dataset(load_csv(food_src,   "food"),   "food")
@@ -100,7 +100,7 @@ def render() -> None:
         )
 
     if st.button("Connect LLM", type="primary"):
-        from src.llm_client import GroqClient
+        from src.llm.client import GroqClient
         client = GroqClient(api_key=api_key or None, model=model)
         if client.is_available():
             st.session_state.groq_client = client

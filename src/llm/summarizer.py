@@ -17,8 +17,8 @@ import json
 
 import pandas as pd
 
-from src.llm_client import GroqClient
-from src.data_processor import compute_derived_stats
+from src.llm.client import GroqClient
+from src.data.processor import compute_derived_stats
 
 
 # ---------------------------------------------------------------------------

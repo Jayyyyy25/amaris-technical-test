@@ -1,7 +1,7 @@
 """
 Data Cleaner
 
-Responsible for transforming raw DataFrames (from :mod:`src.data_loader`)
+Responsible for transforming raw DataFrames (from :mod:`src.data.loader`)
 into clean, analysis-ready ones.
 
 Cleaning pipeline (applied via :func:`clean_dataset`):
